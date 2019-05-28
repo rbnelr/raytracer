@@ -131,6 +131,7 @@ struct Object {
 struct Update_Pattern {
 	iv2 size = 0;
 
+	#if 0
 	iv2 pos;
 
 	void restart (iv2 screen_size) {
@@ -158,6 +159,61 @@ struct Update_Pattern {
 
 		return true;
 	}
+	#else
+	iv2 pos; // from center
+	iv2 dir;
+	int pixels_emitted;
+
+	void restart (iv2 screen_size) {
+		size = screen_size;
+		pos = 0;
+		dir = iv2(-1,+1);
+		pixels_emitted = 0;
+	}
+	void update (iv2 screen_size) {
+		if (!equal(size, screen_size))
+			restart(screen_size);
+	}
+	bool done () {
+		return pixels_emitted == (size.x * size.y);
+	}
+
+	iv2 map_pos (iv2 pos) {
+		return pos + size / 2;
+	}
+	bool pos_on_screen (iv2 pos) {
+		return all(pos >= 0 && pos < size);
+	}
+	void inc_pos () {
+
+		if (equal(pos, iv2(0))) {
+			pos = iv2(1,0);
+		} else {
+			pos += dir;
+
+			if (pos.y == 0 && pos.x >= 0)
+				pos.x += 1;
+			if (any(pos == 0))
+				dir = rotate90(dir);
+		}
+	}
+
+	bool get_next_pixel (iv2* pixel) { // returns false when all pixels are processed
+		if (done())
+			return false;
+
+		iv2 out_pos;
+		do {
+			out_pos = map_pos(pos);
+
+			inc_pos();
+		} while (!pos_on_screen(out_pos));
+
+		pixels_emitted++;
+		*pixel = out_pos;
+		return true;
+	}
+	#endif
 };
 
 struct Scene {

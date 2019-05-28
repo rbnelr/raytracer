@@ -18,12 +18,12 @@ struct Sphere : Object {
 		flt sphere_dist = dot(ray.dir, sphere_pos_ray);
 
 		v3 nearest_p_ray = ray.dir * sphere_dist;
-		flt least_r = distance(nearest_p_ray, sphere_pos_ray);
+		flt least_r_sqr = length_sqr(nearest_p_ray - sphere_pos_ray);
 
-		if (least_r > radius)
+		if (least_r_sqr > radius*radius)
 			return false; // ray misses sphere
 
-		flt half_secant_len = sqrt(radius*radius - least_r*least_r); // c^2 - a^2 = b^2
+		flt half_secant_len = sqrt(radius*radius - least_r_sqr); // c^2 - a^2 = b^2
 
 		flt enter_dist = sphere_dist - half_secant_len;
 		flt exit_dist = sphere_dist + half_secant_len;
@@ -87,20 +87,8 @@ Raytracer::Raytracer () {
 	scene.objs.push_back( make_unique<Plane>(0.0f, 5.0f, Material{MatTexture{wood_tex1, v2(5.0f)}}) );
 }
 
-//std::vector<v3> gen_sample_dirs_tangent (int samples) {
-//	
-//}
-
-template <typename FUNC>
-int sample_uniform (int samples, v3 normal, FUNC sample) {
-
-	v3 tangent = equal(normal, v3(1,0,0)) ? v3(0,0,1) : v3(1,0,0);
-	v3 cotangent = normalize(cross(normal, tangent));
-	tangent = normalize(cross(cotangent, normal));
-
-	m3 tangent_to_world = m3::rows(tangent, cotangent, normal);
-
-	assert(samples >= 2);
+std::vector<v3> gen_sample_dirs_tangent (int samples) {
+	std::vector<v3> arr;
 
 	for (int elev_i=0; elev_i<samples/2; ++elev_i) {
 		flt elev_t = (flt)elev_i / (flt)(samples/2);
@@ -112,15 +100,38 @@ int sample_uniform (int samples, v3 normal, FUNC sample) {
 		for (int azim_i=0; azim_i<samples; ++azim_i) {
 			flt azim_t = (flt)azim_i / (flt)samples;
 			flt azim = lerp(0, deg(360), azim_t);
-			
-			v3 dir2 = rotate3_Z(azim) * dir;
-			dir2 = tangent_to_world * dir2;
-			
-			sample(dir2);
+
+			v3 dir_tangent = rotate3_Z(azim) * dir;
+
+			arr.push_back(dir_tangent);
 		}
 	}
 
-	return (samples/2) * samples;
+	return arr;
+}
+
+template <typename FUNC>
+int sample_uniform (int samples, v3 normal, FUNC sample) {
+
+	v3 tangent = equal(normal, v3(1,0,0)) ? v3(0,0,1) : v3(1,0,0);
+	v3 cotangent = normalize(cross(normal, tangent));
+	tangent = normalize(cross(cotangent, normal));
+
+	m3 tangent_to_world = m3::rows(tangent, cotangent, normal);
+
+	assert(samples >= 2);
+	int total_samples = (samples/2) * samples;
+
+	static std::vector<v3> sample_dirs;
+	if (sample_dirs.size() != (size_t)total_samples)
+		sample_dirs = gen_sample_dirs_tangent(samples);
+
+	for (v3 sample_dir : sample_dirs) {
+		v3 dir = tangent_to_world * sample_dir;
+		sample(dir);
+	}
+
+	return total_samples;
 };
 
 int max_bounces = 2;
@@ -150,15 +161,6 @@ lrgb raytrace (Scene const& scene, Ray const& ray, int bounces=0) {
 
 	if (hit.dist < 0.001f)
 		return lrgb(1,0,1);
-
-	//if (hit_obj) {
-	//	bool danger = is_danger_float(hit.normal.x) || is_danger_float(hit.normal.y) || is_danger_float(hit.normal.z) || is_danger_float(hit.uv.x) || is_danger_float(hit.uv.y);
-	//
-	//	if (hit_obj && danger) {
-	//		int a = 5;
-	//		printf("beep boop\n");
-	//	}
-	//}
 
 	if (!hit_obj) {
 		return scene.skybox->sample_equirectangular(ray.dir);
@@ -247,29 +249,26 @@ lrgb Object::material_response (Hit const& hit, v3 ray_dir, FUNC raytrace) const
 		bounced.dir = reflect(hit.normal, ray_dir);
 		col += raytrace(bounced) * 0.95f;
 	} else {
-	
-		//return lrgb(nearest_hit.normal * 0.5f + 0.5f);
-	
-		//lrgb diffuse_col = 1;
-
+		
 		lrgb diffuse_light = 0;
-		
-		int sample_count = sample_uniform(15, hit.normal, [&] (v3 dir) {
+
+		int sample_count = sample_uniform(10, hit.normal, [&] (v3 dir) {
 			bounced.dir = dir;
-		
+			
 			flt d = dot(hit.normal, bounced.dir);
 			
 			diffuse_light += d * raytrace(bounced);
-
 		});
 		
 		diffuse_light /= (flt)sample_count;
 
 		col += (lrgb)(diffuse_light * diffuse);
-	
-		//return lrgb(bounced.dir * 0.5f + 0.5f);
-	
-		//return lerp(mirror_col, diffuse, hit_obj->diffuse_factor);
+
+		bool danger = is_danger_float(col.x) || is_danger_float(col.y) || is_danger_float(col.z);
+		if (danger) {
+			int a = 5;
+			printf("beep boop\n");
+		}
 	}
 
 	return col;
