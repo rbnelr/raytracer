@@ -234,5 +234,5 @@ struct Raytracer {
 
 	lrgb Raytracer::raytrace_pixel (iv2 pix_pos, iv2 size);
 
-	void frame (kiss::Image<lrgb>* img);
+	void frame (kiss::Image<lrgb>* img, iv2 mouse_pos, Input& inp);
 };

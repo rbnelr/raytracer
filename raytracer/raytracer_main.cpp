@@ -81,8 +81,10 @@ void frame (kiss::Input& inp) {
 	static Texture_Streamer<lrgb> texture;
 	texture.resize(roundi((v2)inp.window_size * render_scale));
 
+	iv2 mouse_pos_pix = floori(inp.get_mouse_pos_pixel_center() * render_scale);
+
 	static Raytracer raytracer;
-	raytracer.frame(&texture.cpu_texture);
+	raytracer.frame(&texture.cpu_texture, mouse_pos_pix, inp);
 
 	texture.stream();
 

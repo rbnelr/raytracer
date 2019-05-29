@@ -87,6 +87,22 @@ Raytracer::Raytracer () {
 	scene.objs.push_back( make_unique<Plane>(0.0f, 5.0f, Material{MatTexture{wood_tex1, v2(5.0f)}}) );
 }
 
+bool show_debug = false;
+lrgb debug_color = 0;
+
+void DEBUG (lrgb col) {
+	if (!show_debug) {
+		debug_color = col;
+		show_debug = true;
+	}
+}
+void DEBUG (float f) {
+	if (!show_debug) {
+		debug_color = lrgb(f);
+		show_debug = true;
+	}
+}
+
 std::vector<v3> gen_sample_dirs_tangent (int samples) {
 	std::vector<v3> arr;
 
@@ -136,28 +152,33 @@ int sample_uniform (int samples, v3 normal, FUNC sample) {
 
 int max_bounces = 2;
 
-Object const* cast_ray (Scene const& scene, Ray const& ray, Hit* hit) {
+Object const* cast_ray (Scene const& scene, Ray const& ray, Object const* source_obj, Hit* hit) {
 	Object const* hit_obj = nullptr;
 	hit->dist = INF;
 	
 	for (auto& obj : scene.objs) {
-		Hit h;
-		if (obj->intersect(ray, &h) && h.dist > 0 && h.dist < hit->dist) {
-			hit_obj = obj.get();
-			*hit = h;
+		if (obj.get() != source_obj) { // prevent rays from hitting the object they bounced from
+			Hit h;
+			if (obj->intersect(ray, &h) && h.dist > 0 && h.dist < hit->dist) {
+				hit_obj = obj.get();
+				*hit = h;
+			}
 		}
 	}
 
 	return hit_obj;
 }
 
-bool is_danger_float (flt f) { return !std::isnormal(f) && f != 0; } 
-
-lrgb raytrace (Scene const& scene, Ray const& ray, int bounces=0) {
+lrgb raytrace (Scene const& scene, Ray const& ray, Object const* bounce_obj=nullptr, int bounces=0) {
 	//DBGLOG("raytrace(ray.pos: %g %g %g ray.dir: %g %g %g, bounces: %d)\n", ray.pos.x, ray.pos.y, ray.pos.z, ray.dir.x, ray.dir.y, ray.dir.z, bounces);
 	
 	Hit hit;
-	Object const* hit_obj = cast_ray(scene, ray, &hit);
+	Object const* hit_obj = cast_ray(scene, ray, bounce_obj, &hit);
+
+	if (hit_obj && bounce_obj == hit_obj) {
+		DEBUG(lrgb(1,0,0));
+		//assert(false);
+	}
 
 	if (hit.dist < 0.001f)
 		return lrgb(1,0,1);
@@ -172,33 +193,61 @@ lrgb raytrace (Scene const& scene, Ray const& ray, int bounces=0) {
 		}
 
 		return hit_obj->material_response(hit, ray.dir, [&] (Ray ray) {
-			return raytrace(scene, ray, bounces + 1);
+			return raytrace(scene, ray, hit_obj, bounces + 1);
 		});
 	}
 }
 
+bool is_danger_float (flt f) { return !std::isnormal(f) && f != 0; } 
+
 lrgb Raytracer::raytrace_pixel (iv2 pix_pos, iv2 size) {
+	show_debug = false;
+
 	Ray ray;
 	ray.dir = cam.get_screen_ray((v2)pix_pos / (v2)size, (flt)size.x / (flt)size.y, &ray.pos);
 
-	return raytrace(scene, ray) * 3;
+	auto col = raytrace(scene, ray) * 3;
+
+	bool danger = is_danger_float(col.x) || is_danger_float(col.y) || is_danger_float(col.z);
+	if (danger) {
+		printf("Beep boop dangerous float detected! %g %g %g at pixel %d %d\n", col.x, col.y, col.z, pix_pos.x, pix_pos.y);
+	}
+	
+	if (show_debug) {
+		col = debug_color;
+	}
+
+	return col;
 }
 
-void Raytracer::frame (kiss::Image<lrgb>* img) {
+void Raytracer::frame (kiss::Image<lrgb>* img, iv2 mouse_pos, Input& inp) {
 	cam.update(0, false, 0, 0);
 	cam.calc_matricies();
 
-	if (0) {
-		//iv2 dbg_pos = iv2(400,200);
-		iv2 dbg_pos = iv2(640,196);
+	if (all(mouse_pos >= 0 && mouse_pos < img->size)) {
+		static iv2 dbg_pos = 0;
 
-		if (all(dbg_pos < img->size)) {
+		if (inp.went_down('M')) {
+			dbg_pos = mouse_pos;
+
 			for (int x=0; x<img->size.x; ++x)
-				img->get_pixel(iv2(x,dbg_pos.y)) = srgb(255,0,0);
+				img->get_pixel(iv2(x,dbg_pos.y)) += srgb(255,0,0);
 			for (int y=0; y<img->size.y; ++y)
-				img->get_pixel(iv2(dbg_pos.x,y)) = srgb(255,0,0);
+				img->get_pixel(iv2(dbg_pos.x,y)) += srgb(255,0,0);
 
-			img->get_pixel(dbg_pos) = raytrace_pixel(dbg_pos, img->size);
+			printf("debug raytrace pixel set to %d %d\n", dbg_pos.x,dbg_pos.y);
+		}
+		if (inp.went_down('N')) {
+
+			Timer t;
+			t.start();
+
+			auto col = raytrace_pixel(dbg_pos, img->size);
+			img->get_pixel(dbg_pos) = col;
+
+			flt total_time = t.end();
+
+			printf("debug raytrace pixel %d %d raytraced, time: %7.4f ms -> color %g %g %g\n", dbg_pos.x,dbg_pos.y, total_time * 1000, col.x, col.y, col.z);
 		}
 	}
 
@@ -252,7 +301,7 @@ lrgb Object::material_response (Hit const& hit, v3 ray_dir, FUNC raytrace) const
 		
 		lrgb diffuse_light = 0;
 
-		int sample_count = sample_uniform(10, hit.normal, [&] (v3 dir) {
+		int sample_count = sample_uniform(7, hit.normal, [&] (v3 dir) {
 			bounced.dir = dir;
 			
 			flt d = dot(hit.normal, bounced.dir);
@@ -263,12 +312,6 @@ lrgb Object::material_response (Hit const& hit, v3 ray_dir, FUNC raytrace) const
 		diffuse_light /= (flt)sample_count;
 
 		col += (lrgb)(diffuse_light * diffuse);
-
-		bool danger = is_danger_float(col.x) || is_danger_float(col.y) || is_danger_float(col.z);
-		if (danger) {
-			int a = 5;
-			printf("beep boop\n");
-		}
 	}
 
 	return col;
